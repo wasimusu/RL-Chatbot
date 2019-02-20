@@ -33,3 +33,9 @@ Assume we have two chatbots talking to each other. The chats proceed as follows 
 - State : p1, q1
 - Action : p2 which is an arbitrary length dialog
 - Reward : how was the reponse ( drives chat further, repeatitive, coherent, mututal information )
+
+
+### The Next Two Weeks
+- Figure out Policy Gradient (Apply it on one of Gym's environment)
+- Preprocessing data
+- Setup GCP 
