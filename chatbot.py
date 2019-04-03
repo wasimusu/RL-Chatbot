@@ -36,9 +36,7 @@ MOVIE_LINES_FIELDS = ["lineID", "characterID", "movieID", "character", "text"]
 MOVIE_CONVERSATIONS_FIELDS = ["character1ID", "character2ID", "movieID", "utteranceIDs"]
 
 # Load lines and process conversations
-print("\nProcessing corpus...")
 lines = loadLines(os.path.join(corpus, "movie_lines.txt"), MOVIE_LINES_FIELDS)
-print("\nLoading conversations...")
 conversations = loadConversations(os.path.join(corpus, "movie_conversations.txt"),
                                   lines, MOVIE_CONVERSATIONS_FIELDS)
 
@@ -48,10 +46,6 @@ with open(datafile, 'w', encoding='utf-8') as outputfile:
     writer = csv.writer(outputfile, delimiter=delimiter, lineterminator='\n')
     for pair in extractSentencePairs(conversations):
         writer.writerow(pair)
-
-# Print a sample of lines
-print("\nSample lines from file:")
-printLines(datafile)
 
 # Default word tokens
 PAD_token = 0  # Used for padding short sentences
@@ -112,7 +106,6 @@ MAX_LENGTH = 10  # Maximum sentence length to consider
 
 # Read query/response pairs and return a voc object
 def readVocs(datafile, corpus_name):
-    print("Reading lines...")
     # Read the file and split into lines
     lines = open(datafile, encoding='utf-8'). \
         read().strip().split('\n')
@@ -122,23 +115,12 @@ def readVocs(datafile, corpus_name):
     return voc, pairs
 
 
-# Returns True iff both sentences in a pair 'p' are under the MAX_LENGTH threshold
-def filterPair(p):
-    # Input sequences need to preserve the last word for EOS token
-    return len(p[0].split(' ')) < MAX_LENGTH and len(p[1].split(' ')) < MAX_LENGTH
-
-
-# Filter pairs using filterPair condition
-def filterPairs(pairs):
-    return [pair for pair in pairs if filterPair(pair)]
-
 
 # Using the functions defined above, return a populated voc object and pairs list
 def loadPrepareData(corpus, corpus_name, datafile, save_dir):
     print("Start preparing training data ...")
     voc, pairs = readVocs(datafile, corpus_name)
     print("Read {!s} sentence pairs".format(len(pairs)))
-    pairs = filterPairs(pairs)
     print("Trimmed to {!s} sentence pairs".format(len(pairs)))
     print("Counting words...")
     for pair in pairs:
@@ -310,6 +292,7 @@ class Attn(torch.nn.Module):
         return torch.sum(self.v * energy, dim=2)
 
     def forward(self, hidden, encoder_outputs):
+        print("Encoder outputs contains all outputs not just last layer output : ", encoder_outputs.size())
         # Calculate the attention weights (energies) based on the given method
         if self.method == 'general':
             attn_energies = self.general_score(hidden, encoder_outputs)
@@ -396,12 +379,16 @@ def train(input_variable, lengths, target_variable, mask, max_target_len, encode
     # Forward pass through encoder
     encoder_outputs, encoder_hidden = encoder(input_variable, lengths)
 
+    print("Encoder outputs : {} Hidden : {}\nMaybe only includes the last hidden state and output \n".format(
+        encoder_outputs.size(), encoder_hidden.size()))
+
     # Create initial decoder input (start with SOS tokens for each sentence)
     decoder_input = torch.LongTensor([[SOS_token for _ in range(batch_size)]])
     decoder_input = decoder_input.to(device)
 
     # Set initial decoder hidden state to the encoder's final hidden state
     decoder_hidden = encoder_hidden[:decoder.n_layers]
+    print("Here we are using only last state of decoder for encoder's hidden state : ", decoder_hidden.size())
 
     # Determine if we are using teacher forcing this iteration
     use_teacher_forcing = True if random.random() < teacher_forcing_ratio else False
@@ -597,7 +584,6 @@ batch_size = 64
 
 # Set checkpoint to load from; set to None if starting from scratch
 checkpoint_iter = 8000
-loadFilename = True
 loadFilename = os.path.join(save_dir, model_name, corpus_name,
                             '{}-{}_{}'.format(encoder_n_layers, decoder_n_layers, hidden_size),
                             '{}_checkpoint.tar'.format(checkpoint_iter))
@@ -620,12 +606,14 @@ print('Building encoder and decoder ...')
 embedding = nn.Embedding(voc.num_words, hidden_size)
 if loadFilename:
     embedding.load_state_dict(embedding_sd)
+
 # Initialize encoder & decoder models
 encoder = EncoderRNN(hidden_size, embedding, encoder_n_layers, dropout)
 decoder = LuongAttnDecoderRNN(attn_model, embedding, hidden_size, voc.num_words, decoder_n_layers, dropout)
 if loadFilename:
     encoder.load_state_dict(encoder_sd)
     decoder.load_state_dict(decoder_sd)
+
 # Use appropriate device
 encoder = encoder.to(device)
 decoder = decoder.to(device)
@@ -633,10 +621,10 @@ print('Models built and ready to go!')
 
 # Configure training/optimization
 clip = 50.0
-teacher_forcing_ratio = 1.0
+teacher_forcing_ratio = 0.1
 learning_rate = 0.0001
 decoder_learning_ratio = 5.0
-n_iteration = 8000
+n_iteration = 9000
 print_every = 50
 save_every = 500
 
@@ -663,7 +651,7 @@ encoder.eval()
 decoder.eval()
 
 # Initialize search module
-searcher = GreedySearchDecoder(encoder, decoder)
+# searcher = GreedySearchDecoder(encoder, decoder)
 
 # Begin chatting (uncomment and run the following line to begin)
-evaluateInput(encoder, decoder, searcher, voc)
+# evaluateInput(encoder, decoder, searcher, voc)

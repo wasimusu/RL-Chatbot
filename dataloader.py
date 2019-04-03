@@ -3,6 +3,8 @@ import torchtext.vocab as vocab
 import nltk
 import torch
 
+import numpy as np
+
 from collections import Counter
 import random
 import itertools
@@ -11,9 +13,11 @@ random.seed(1)
 
 
 class OpenSubtitle:
-    """"""
+    """
+    OpenSubtitle data parser
+    """
 
-    def __init__(self, filename, MIN_FREQ=1, VOCAB_SIZE=2000, batch_size=5, MAX_SENTENCE_LEN=20, shuffle=False):
+    def __init__(self, filename, VOCAB_SIZE=2000, batch_size=5, MAX_SENTENCE_LEN=20, shuffle=False):
         self.batch_size = batch_size
         self.specials = ['<pad>', '<eos>', '<sos>']
         self.shuffle = shuffle
@@ -26,10 +30,10 @@ class OpenSubtitle:
         self.vocab = [word for word, count in self.vocab]
         self.vocab += self.specials
 
-        # String to id : stoi
-        # id to string : itos
-        self.itos = dict(zip(range(len(self.vocab)), self.vocab))
-        self.stoi = dict(zip(self.vocab, range(len(self.vocab))))
+        # String to id : word2index
+        # id to string : index2word
+        self.index2word = dict(zip(range(len(self.vocab)), self.vocab))
+        self.word2index = dict(zip(self.vocab, range(len(self.vocab))))
 
         self.vectors = []
 
@@ -45,9 +49,8 @@ class OpenSubtitle:
         for dialog in temp_q:
             keep_dialog = True
             for word in dialog:
-                if word not in self.stoi.keys():
+                if word not in self.word2index.keys():
                     keep_dialog = False
-                    # print(word)
                     break
             if keep_dialog: self.q.append(dialog)
 
@@ -76,17 +79,20 @@ class OpenSubtitle:
 
         # Return q, a belonging to those ids
         inputs = [self.word_id(self.q[id]) for id in ids]
+        input_lengths = [len(dialog) for dialog in inputs]
         targets = [self.word_id(self.a[id]) for id in ids]
 
-        input_lengths = [len(dialog) for dialog in inputs]
-        input_lengths = sorted(input_lengths, reverse=True)
-        input_lengths = torch.tensor(input_lengths)
+        # Sort the input according to decreasing length
+        ranks = np.argsort(input_lengths)[::-1]
+        input_lengths = torch.tensor(sorted(input_lengths, reverse=True))
+        inputs = [inputs[id] for id in ranks]
+        targets = [targets[id] for id in ranks]
 
         max_target_length = max([len(dialog) for dialog in targets])
 
         mask = [self.generate_mask(dialog, max_target_length) for dialog in targets]
-        inputs = self.zeroPadding(inputs, self.stoi['<pad>'])
-        targets = self.zeroPadding(targets, self.stoi['<pad>'])
+        inputs = self.zeroPadding(inputs, self.word2index['<pad>'])
+        targets = self.zeroPadding(targets, self.word2index['<pad>'])
 
         inputs = torch.tensor(inputs).view(-1, self.batch_size)
         targets = torch.tensor(targets).view(-1, self.batch_size)
@@ -96,7 +102,7 @@ class OpenSubtitle:
         return inputs, input_lengths, targets, mask, max_target_length
 
     def word_id(self, sentence):
-        return [self.stoi[word] for word in sentence]
+        return [self.word2index[word] for word in sentence]
 
     def generate_mask(self, dialog, max_length):
         return [1] * len(dialog) + [0] * (max_length - len(dialog))
@@ -112,16 +118,22 @@ class OpenSubtitle:
 
 
 if __name__ == '__main__':
-    osp = OpenSubtitle(filename='data/opensubtitle/en-eu.txt/OpenSubtitles.en-eu.en', MIN_FREQ=3)
+    osp = OpenSubtitle(filename='data/opensubtitle/en-eu.txt/OpenSubtitles.en-eu.en')
     data = osp.next()
     inputs, input_lengths, targets, mask, max_target_length = data
 
-    print("Inputs : \n", inputs)
-    print("Input l: ", input_lengths)
-    print("Targets: \n", targets)
-    print("Mask   : \n", mask)
-    print("Max L  : ", max_target_length)
+    # print("Inputs : \n", inputs)
+    # print("Input l: ", input_lengths)
+    # print("Targets: \n", targets)
+    # print("Mask   : \n", mask)
+    # print("Max L  : ", max_target_length)
 
-    # vocab = vocab.Vocab(osp.words, 2000, 3, specials=['<eos>', '<sos>', '<pad>'], vectors="glove.6B.100d",
-    #                     vectors_cache='../.vector_cache')
-    # print(vocab.vectors[4])
+    # for i in range(len(osp)):
+    #     print(i)
+    #     osp.next()
+
+    print(len(osp.vocab))
+
+    pretrained_embeddings = vocab.Vocab(osp.words, len(osp.vocab), 3, vectors="glove.6B.100d",
+                                        vectors_cache='../.vector_cache').vectors
+    print(pretrained_embeddings.shape)

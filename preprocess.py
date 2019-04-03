@@ -9,8 +9,9 @@ def printLines(file, n=10):
     for line in lines[:n]:
         print(line)
 
-# Splits each line of the file into a dictionary of fields
+
 def loadLines(fileName, fields):
+    "Splits each line of the file into a dictionary of fields"
     lines = {}
     with open(fileName, 'r', encoding='iso-8859-1') as f:
         for line in f:
@@ -57,7 +58,6 @@ def extractSentencePairs(conversations):
     return qa_pairs
 
 
-
 # Turn a Unicode string to plain ASCII, thanks to
 # https://stackoverflow.com/a/518232/2809427
 def unicodeToAscii(s):
@@ -74,4 +74,3 @@ def normalizeString(s):
     s = re.sub(r"[^a-zA-Z.!?]+", r" ", s)
     s = re.sub(r"\s+", r" ", s).strip()
     return s
-
