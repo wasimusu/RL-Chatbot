@@ -61,21 +61,23 @@ class OpenSubtitle:
         self.q.pop()
         assert len(self.q) == len(self.a)
 
-        self.ids = list(range(len(self.q)))  # Need to re-instantiate this for another epoch of training
+        self.num_batch = len(self.q) // self.batch_size
+
+        self.generate_ids()
+
+    def generate_ids(self):
+        self.ids = list(range(len(self.q)))
+        if self.shuffle:
+            random.shuffle(self.ids)
+        self.ids = self.ids[:self.num_batch * self.batch_size]
 
     def __next__(self):
         # Select list of ids
-        if self.shuffle:
-            ids = random.choices(self.ids, k=self.batch_size)
-            # Now remove those id from ids so that they are not sampled again
-            for id in ids:
-                self.ids.pop(self.ids.index(id))
+        ids = [self.ids.pop(0) for _ in range(self.batch_size)]
 
-        else:
-            ids = [self.ids.pop(0) for _ in range(self.batch_size)]
-
-        if len(self.ids) < self.batch_size:
-            self.ids = list(range(len(self.q)))  # Need to re-instantiate this for another epoch of training
+        # to start a new batch
+        if not self.ids:
+            self.generate_ids()
 
         # Return q, a belonging to those ids
         inputs = [self.word_id(self.q[id]) for id in ids]
@@ -114,26 +116,28 @@ class OpenSubtitle:
         return self.__next__()
 
     def __len__(self):
-        return len(self.q)
+        return self.num_batch
 
 
 if __name__ == '__main__':
-    osp = OpenSubtitle(filename='data/opensubtitle/en-eu.txt/OpenSubtitles.en-eu.en')
-    data = osp.next()
-    inputs, input_lengths, targets, mask, max_target_length = data
+    filename = 'data/OpenSubtitles.en-eu.en'
+    osp = OpenSubtitle(filename, 20000, 256, shuffle=True)
 
+    # data = osp.next()
+    # inputs, input_lengths, targets, mask, max_target_length = data
     # print("Inputs : \n", inputs)
     # print("Input l: ", input_lengths)
     # print("Targets: \n", targets)
     # print("Mask   : \n", mask)
     # print("Max L  : ", max_target_length)
 
-    # for i in range(len(osp)):
-    #     print(i)
-    #     osp.next()
-
-    print(len(osp.vocab))
-
-    pretrained_embeddings = vocab.Vocab(osp.words, len(osp.vocab), 3, vectors="glove.6B.100d",
-                                        vectors_cache='../.vector_cache').vectors
-    print(pretrained_embeddings.shape)
+    for j in range(3):
+        print("New Batch started")
+        for i in range(len(osp)):
+            osp.next()
+        print("Finished")
+    # print(len(osp.vocab))
+    #
+    # pretrained_embeddings = vocab.Vocab(osp.words, len(osp.vocab), 3, vectors="glove.6B.100d",
+    #                                     vectors_cache='../.vector_cache').vectors
+    # print(pretrained_embeddings.shape)

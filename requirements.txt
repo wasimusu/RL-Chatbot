@@ -1,3 +1,6 @@
-numpy=1.6.1
-pytorch=1.0.1
-python=3.6.7
+nltk
+numpy==1.6.1
+pytorch==1.0.1
+python==3.6.7
+torchtext
+unzip

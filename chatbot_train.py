@@ -15,19 +15,43 @@ from network import *
 save_dir = 'model/'
 MAX_LENGTH = 10  # Maximum sentence length to consider
 corpus_name = 'opensubtitles'
-batch_size = 64
+batch_size = 128
 
 # Configure training/optimization
 clip = 50.0
 teacher_forcing_ratio = 0.1
-learning_rate = 0.0001
+learning_rate = 0.0005
 decoder_learning_ratio = 5.0
-print_every = 10
-save_every = 10  # Save every 10000 iterations
+print_every = 100
+save_every = 1000  # Save every 10000 iterations
+
+# Configure models
+attn_model = 'dot'
+# attn_model = 'general'
+# attn_model = 'concat'
+hidden_size = 300
+encoder_n_layers = 2
+decoder_n_layers = 2
+dropout = 0.1
+
+# Set checkpoint to load from; set to None if starting from scratch
+dir = os.path.join(save_dir, corpus_name,
+                   '{}-{}_{}'.format(encoder_n_layers, decoder_n_layers, hidden_size))
+if not os.path.exists(dir): os.makedirs(dir)
+checkpoints = os.listdir(dir)
+checkpoints = [int(filename.split('_')[0]) for filename in checkpoints]
+if checkpoints == []:
+    checkpoints = 1
+else:
+    checkpoints = max(checkpoints)
+loadFilename = os.path.join(dir, '{}_checkpoint.tar'.format(checkpoints))
+print(loadFilename, os.path.exists(loadFilename))
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-osp = OpenSubtitle(filename='data/opensubtitle/en-eu.txt/OpenSubtitles.en-eu.en', batch_size=batch_size)
+filename = "data/OpenSubtitles.en-es.en"
+filename = "data/OpenSubtitles.en-eu.en"
+osp = OpenSubtitle(filename, batch_size=batch_size, VOCAB_SIZE=50000, shuffle=True)
 data = osp.next()
 inputs, input_lengths, targets, mask, max_target_length = data
 
@@ -114,7 +138,7 @@ def train(input_variable, lengths, target_variable, mask, max_target_len, encode
     return sum(print_losses) / n_totals
 
 
-def trainIters(model_name, encoder, decoder, encoder_optimizer, decoder_optimizer, encoder_n_layers, decoder_n_layers,
+def trainIters(encoder, decoder, encoder_optimizer, decoder_optimizer, encoder_n_layers, decoder_n_layers,
                clip, loadFilename):
     # Initializations
     print_loss = 0
@@ -124,11 +148,11 @@ def trainIters(model_name, encoder, decoder, encoder_optimizer, decoder_optimize
         epoch = checkpoint['epoch']
 
     # Training loop
-    num_epochs = 10
+    num_epochs = 20
     print("Training...")
     for epoch in range(epoch, num_epochs + 1):
         epoch_loss = 0
-        for iteration in range(osp.__len__()):
+        for iteration in range(osp.__len__() - 2):
             # Load batches for each iteration
             training_batch = osp.next()
             # Extract fields from batch
@@ -143,15 +167,15 @@ def trainIters(model_name, encoder, decoder, encoder_optimizer, decoder_optimize
             # Print progress
             if iteration % print_every == 0:
                 print_loss_avg = print_loss / print_every
-                print("Iteration: {}; Percent complete: {:.1f}%; Average loss: {:.4f}".format(epoch,
-                                                                                              iteration / len(
-                                                                                                  osp) * 100,
-                                                                                              print_loss_avg))
+                print("Epoch: {}; Percent complete: {:.1f}%; Average loss: {:.4f}".format(epoch,
+                                                                                          iteration / len(
+                                                                                              osp) * 100,
+                                                                                          print_loss_avg))
                 print_loss = 0
 
             # Save checkpoint
             if (iteration % save_every == 0):
-                directory = os.path.join(save_dir, model_name, corpus_name,
+                directory = os.path.join(save_dir, corpus_name,
                                          '{}-{}_{}'.format(encoder_n_layers, decoder_n_layers, hidden_size))
                 if not os.path.exists(directory):
                     os.makedirs(directory)
@@ -248,28 +272,6 @@ def evaluateInput(encoder, decoder, searcher):
             print("Error: Encountered unknown word.")
 
 
-# Configure models
-model_name = 'cb_model'
-attn_model = 'dot'
-# attn_model = 'general'
-# attn_model = 'concat'
-hidden_size = 100
-encoder_n_layers = 2
-decoder_n_layers = 2
-dropout = 0.1
-
-# Set checkpoint to load from; set to None if starting from scratch
-dir = os.path.join(save_dir, model_name, corpus_name,
-                   '{}-{}_{}'.format(encoder_n_layers, decoder_n_layers, hidden_size))
-checkpoints = os.listdir(dir)
-checkpoints = [int(filename.split('_')[0]) for filename in checkpoints]
-if checkpoints == []:
-    checkpoints = 1
-else:
-    checkpoints = max(checkpoints)
-loadFilename = os.path.join(dir, '{}_checkpoint.tar'.format(checkpoints))
-print(loadFilename, os.path.exists(loadFilename))
-
 # Load model if a loadFilename is provided
 if loadFilename and os.path.exists(loadFilename):
     # If loading on same machine the model was trained on
@@ -289,7 +291,7 @@ embedding = nn.Embedding(vocab_size + 1, hidden_size)
 if loadFilename and os.path.exists(loadFilename):
     embedding.load_state_dict(embedding_sd)
 else:
-    pretrained_embeddings = vocab.Vocab(osp.words, vocab_size, 3, vectors="glove.6B.100d",
+    pretrained_embeddings = vocab.Vocab(osp.words, vocab_size, 3, vectors="glove.6B.300d",
                                         vectors_cache='../.vector_cache').vectors
     print(vocab_size, pretrained_embeddings.shape)
     embedding.weight.data.copy_(pretrained_embeddings)
@@ -314,7 +316,7 @@ decoder.train()
 # Initialize optimizers
 print('Building optimizers ...')
 encoder_optimizer = optim.Adam(encoder.parameters(), lr=learning_rate)
-decoder_optimizer = optim.Adam(decoder .parameters(), lr=learning_rate * decoder_learning_ratio)
+decoder_optimizer = optim.Adam(decoder.parameters(), lr=learning_rate * decoder_learning_ratio)
 if loadFilename and os.path.exists(loadFilename):
     encoder_optimizer.load_state_dict(encoder_optimizer_sd)
     decoder_optimizer.load_state_dict(decoder_optimizer_sd)
@@ -323,9 +325,8 @@ else:
     print("No existing model to begin with")
 
 # Run training iterations
-# print("Starting Training!")
-# trainIters(model_name, encoder, decoder, encoder_optimizer, decoder_optimizer, encoder_n_layers, decoder_n_layers, clip,
-#            loadFilename)
+trainIters(encoder, decoder, encoder_optimizer, decoder_optimizer, encoder_n_layers, decoder_n_layers, clip,
+           loadFilename)
 
 # Set dropout layers to eval mode
 encoder.eval()
@@ -335,4 +336,4 @@ decoder.eval()
 searcher = GreedySearchDecoder(encoder, decoder)
 
 # Begin chatting (uncomment and run the following line to begin)
-evaluateInput(encoder, decoder, searcher)
+# evaluateInput(encoder, decoder, searcher)
