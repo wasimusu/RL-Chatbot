@@ -6,19 +6,24 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 class EncoderRNN(nn.Module):
-    def __init__(self, hidden_size, embedding, num_layers=1, dropout=0):
+    def __init__(self, hidden_size, embedding, num_layers=1, dropout=0, batch_size=1):
         super(EncoderRNN, self).__init__()
         self.num_layers = num_layers
         self.hidden_size = hidden_size
         self.embedding = embedding
+        self.num_directions = 1  # Unidirectional
+        self.batch_size = batch_size
 
         # Initialize GRU; the input_size and hidden_size params are both set to 'hidden_size'
         #   because our input size is a word embedding with number of features == hidden_size
         self.gru = nn.GRU(hidden_size, hidden_size, num_layers,
                           dropout=(0 if num_layers == 1 else dropout), bidirectional=True)
 
+        self.hidden = self.initHidden()
+
     def forward(self, input_seq, input_lengths, hidden=None):
         input_seq = input_seq.to(device)
+        # if input_lengths == 1: input_lengths = [len(input_seq)]
         # Convert word indexes to embeddings
         embedded = self.embedding(input_seq)
         # Pack padded batch of sequences for RNN module
@@ -31,6 +36,9 @@ class EncoderRNN(nn.Module):
         outputs = outputs[:, :, :self.hidden_size] + outputs[:, :, self.hidden_size:]
         # Return output and final hidden state
         return outputs, hidden
+
+    def initHidden(self):
+        return torch.zeros(self.num_layers * self.num_directions, self.batch_size, self.hidden_size)
 
 
 # Luong attention layer
@@ -75,6 +83,61 @@ class Attn(torch.nn.Module):
         return F.softmax(attn_energies, dim=1).unsqueeze(1)
 
 
+class PlainDecoder(nn.Module):
+    def __init__(self, attn_model, embedding, hidden_size, output_size, batch_size=1, num_layers=1, dropout=0.1):
+        super(PlainDecoder, self).__init__()
+
+        # Keep for reference
+        self.attn_model = attn_model
+        self.hidden_size = hidden_size
+        self.output_size = output_size
+        self.num_layers = num_layers
+        self.dropout = dropout
+        self.batch_size = batch_size
+        self.num_directions = 1  # Assume unidiectional
+        # Define layers
+        self.embedding = embedding
+        self.embedding_dropout = nn.Dropout(dropout)
+        self.gru = nn.GRU(hidden_size, hidden_size, num_layers, dropout=(0 if num_layers == 1 else dropout))
+        self.concat = nn.Linear(hidden_size * 2, hidden_size)
+        self.out = nn.Linear(hidden_size, output_size)
+
+        self.attn = Attn(attn_model, hidden_size)
+
+        self.hidden = self.initHidden()
+
+    def forward(self, input_step, last_hidden, encoder_outputs):
+        # Note: we run this one step (word) at a time
+        # Get embedding of current input word
+        embedded = self.embedding(input_step)
+        embedded = self.embedding_dropout(embedded)
+        # Forward through unidirectional GRU
+        rnn_output, hidden = self.gru(embedded, last_hidden)
+
+        # # Calculate attention weights from the current GRU output
+        # attn_weights = self.attn(rnn_output, encoder_outputs)
+        # # Multiply attention weights to encoder outputs to get new "weighted sum" context vector
+        # context = attn_weights.bmm(encoder_outputs.transpose(0, 1))
+        # # Concatenate weighted context vector and GRU output using Luong eq. 5
+        # rnn_output = rnn_output.squeeze(0)
+        # context = context.squeeze(1)
+        # concat_input = torch.cat((rnn_output, context), 1)
+        # concat_output = torch.tanh(self.concat(concat_input))
+        # # Predict next word using Luong eq. 6
+        # output = self.out(concat_output)
+        # output = F.softmax(output, dim=1)
+        # # Return output and final hidden state
+        # return output, hidden
+
+        output = self.out(rnn_output)
+        output = output.squeeze(0)
+        output = F.softmax(output, dim=1)
+        return output, hidden
+
+    def initHidden(self):
+        return torch.zeros(self.num_layers * self.num_directions, self.batch_size, self.hidden_size).to(device)
+
+
 class LuongAttnDecoderRNN(nn.Module):
     def __init__(self, attn_model, embedding, hidden_size, output_size, num_layers=1, dropout=0.1):
         super(LuongAttnDecoderRNN, self).__init__()
@@ -115,55 +178,6 @@ class LuongAttnDecoderRNN(nn.Module):
         output = self.out(concat_output)
         output = F.softmax(output, dim=1)
         # Return output and final hidden state
-        return output, hidden
-
-
-class PlainDecoder(nn.Module):
-    def __init__(self, attn_model, embedding, hidden_size, output_size, num_layers=1, dropout=0.1):
-        super(PlainDecoder, self).__init__()
-
-        # Keep for reference
-        self.attn_model = attn_model
-        self.hidden_size = hidden_size
-        self.output_size = output_size
-        self.num_layers = num_layers
-        self.dropout = dropout
-
-        # Define layers
-        self.embedding = embedding
-        self.embedding_dropout = nn.Dropout(dropout)
-        self.gru = nn.GRU(hidden_size, hidden_size, num_layers, dropout=(0 if num_layers == 1 else dropout))
-        self.concat = nn.Linear(hidden_size * 2, hidden_size)
-        self.out = nn.Linear(hidden_size, output_size)
-
-        self.attn = Attn(attn_model, hidden_size)
-
-    def forward(self, input_step, last_hidden, encoder_outputs):
-        # Note: we run this one step (word) at a time
-        # Get embedding of current input word
-        embedded = self.embedding(input_step)
-        embedded = self.embedding_dropout(embedded)
-        # Forward through unidirectional GRU
-        rnn_output, hidden = self.gru(embedded, last_hidden)
-
-        # # Calculate attention weights from the current GRU output
-        # attn_weights = self.attn(rnn_output, encoder_outputs)
-        # # Multiply attention weights to encoder outputs to get new "weighted sum" context vector
-        # context = attn_weights.bmm(encoder_outputs.transpose(0, 1))
-        # # Concatenate weighted context vector and GRU output using Luong eq. 5
-        # rnn_output = rnn_output.squeeze(0)
-        # context = context.squeeze(1)
-        # concat_input = torch.cat((rnn_output, context), 1)
-        # concat_output = torch.tanh(self.concat(concat_input))
-        # # Predict next word using Luong eq. 6
-        # output = self.out(concat_output)
-        # output = F.softmax(output, dim=1)
-        # # Return output and final hidden state
-        # return output, hidden
-
-        output = self.out(rnn_output)
-        output = output.squeeze(0)
-        output = F.softmax(output, dim=1)
         return output, hidden
 
 
