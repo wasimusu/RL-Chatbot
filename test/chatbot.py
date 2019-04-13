@@ -13,8 +13,10 @@ import os
 import codecs
 from io import open
 import itertools
+import torchtext.vocab as vocab
+from collections import Counter
 
-from preprocess import *
+from test.preprocess import *
 
 USE_CUDA = torch.cuda.is_available()
 device = torch.device("cuda" if USE_CUDA else "cpu")
@@ -41,7 +43,6 @@ conversations = loadConversations(os.path.join(corpus, "movie_conversations.txt"
                                   lines, MOVIE_CONVERSATIONS_FIELDS)
 
 # Write new csv file
-print("\nWriting newly formatted file...")
 with open(datafile, 'w', encoding='utf-8') as outputfile:
     writer = csv.writer(outputfile, delimiter=delimiter, lineterminator='\n')
     for pair in extractSentencePairs(conversations):
@@ -87,10 +88,6 @@ class Voc:
             if v >= min_count:
                 keep_words.append(k)
 
-        print('keep_words {} / {} = {:.4f}'.format(
-            len(keep_words), len(self.word2index), len(keep_words) / len(self.word2index)
-        ))
-
         # Reinitialize dictionaries
         self.word2index = {}
         self.word2count = {}
@@ -115,14 +112,9 @@ def readVocs(datafile, corpus_name):
     return voc, pairs
 
 
-
 # Using the functions defined above, return a populated voc object and pairs list
 def loadPrepareData(corpus, corpus_name, datafile, save_dir):
-    print("Start preparing training data ...")
     voc, pairs = readVocs(datafile, corpus_name)
-    print("Read {!s} sentence pairs".format(len(pairs)))
-    print("Trimmed to {!s} sentence pairs".format(len(pairs)))
-    print("Counting words...")
     for pair in pairs:
         voc.addSentence(pair[0])
         voc.addSentence(pair[1])
@@ -134,9 +126,9 @@ def loadPrepareData(corpus, corpus_name, datafile, save_dir):
 save_dir = os.path.join("data", "save")
 voc, pairs = loadPrepareData(corpus, corpus_name, datafile, save_dir)
 # Print some pairs to validate
-print("\npairs:")
-for pair in pairs[:10]:
-    print(pair)
+# print("\npairs:")
+# for pair in pairs[:10]:
+#     print(pair)
 
 MIN_COUNT = 3  # Minimum word count threshold for trimming
 
@@ -232,24 +224,18 @@ small_batch_size = 5
 batches = batch2TrainData(voc, [random.choice(pairs) for _ in range(small_batch_size)])
 input_variable, lengths, target_variable, mask, max_target_len = batches
 
-print("input_variable:", input_variable)
-print("lengths:", lengths)
-print("target_variable:", target_variable)
-print("mask:", mask)
-print("max_target_len:", max_target_len)
-
 
 class EncoderRNN(nn.Module):
-    def __init__(self, hidden_size, embedding, n_layers=1, dropout=0):
+    def __init__(self, hidden_size, embedding, num_layers=1, dropout=0):
         super(EncoderRNN, self).__init__()
-        self.n_layers = n_layers
+        self.num_layers = num_layers
         self.hidden_size = hidden_size
         self.embedding = embedding
 
         # Initialize GRU; the input_size and hidden_size params are both set to 'hidden_size'
         #   because our input size is a word embedding with number of features == hidden_size
-        self.gru = nn.GRU(hidden_size, hidden_size, n_layers,
-                          dropout=(0 if n_layers == 1 else dropout), bidirectional=True)
+        self.gru = nn.GRU(hidden_size, hidden_size, num_layers,
+                          dropout=(0 if num_layers == 1 else dropout), bidirectional=True)
 
     def forward(self, input_seq, input_lengths, hidden=None):
         # Convert word indexes to embeddings
@@ -292,7 +278,6 @@ class Attn(torch.nn.Module):
         return torch.sum(self.v * energy, dim=2)
 
     def forward(self, hidden, encoder_outputs):
-        print("Encoder outputs contains all outputs not just last layer output : ", encoder_outputs.size())
         # Calculate the attention weights (energies) based on the given method
         if self.method == 'general':
             attn_energies = self.general_score(hidden, encoder_outputs)
@@ -309,20 +294,20 @@ class Attn(torch.nn.Module):
 
 
 class LuongAttnDecoderRNN(nn.Module):
-    def __init__(self, attn_model, embedding, hidden_size, output_size, n_layers=1, dropout=0.1):
+    def __init__(self, attn_model, embedding, hidden_size, output_size, num_layers=1, dropout=0.1):
         super(LuongAttnDecoderRNN, self).__init__()
 
         # Keep for reference
         self.attn_model = attn_model
         self.hidden_size = hidden_size
         self.output_size = output_size
-        self.n_layers = n_layers
+        self.num_layers = num_layers
         self.dropout = dropout
 
         # Define layers
         self.embedding = embedding
         self.embedding_dropout = nn.Dropout(dropout)
-        self.gru = nn.GRU(hidden_size, hidden_size, n_layers, dropout=(0 if n_layers == 1 else dropout))
+        self.gru = nn.GRU(hidden_size, hidden_size, num_layers, dropout=(0 if num_layers == 1 else dropout))
         self.concat = nn.Linear(hidden_size * 2, hidden_size)
         self.out = nn.Linear(hidden_size, output_size)
 
@@ -379,16 +364,12 @@ def train(input_variable, lengths, target_variable, mask, max_target_len, encode
     # Forward pass through encoder
     encoder_outputs, encoder_hidden = encoder(input_variable, lengths)
 
-    print("Encoder outputs : {} Hidden : {}\nMaybe only includes the last hidden state and output \n".format(
-        encoder_outputs.size(), encoder_hidden.size()))
-
     # Create initial decoder input (start with SOS tokens for each sentence)
     decoder_input = torch.LongTensor([[SOS_token for _ in range(batch_size)]])
     decoder_input = decoder_input.to(device)
 
     # Set initial decoder hidden state to the encoder's final hidden state
-    decoder_hidden = encoder_hidden[:decoder.n_layers]
-    print("Here we are using only last state of decoder for encoder's hidden state : ", decoder_hidden.size())
+    decoder_hidden = encoder_hidden[:decoder.num_layers]
 
     # Determine if we are using teacher forcing this iteration
     use_teacher_forcing = True if random.random() < teacher_forcing_ratio else False
@@ -436,7 +417,7 @@ def train(input_variable, lengths, target_variable, mask, max_target_len, encode
 
 
 def trainIters(model_name, voc, pairs, encoder, decoder, encoder_optimizer, decoder_optimizer, embedding,
-               encoder_n_layers, decoder_n_layers, save_dir, n_iteration, batch_size, print_every, save_every, clip,
+               encoder_num_layers, decoder_num_layers, save_dir, n_iteration, batch_size, print_every, save_every, clip,
                corpus_name, loadFilename):
     # Load batches for each iteration
     training_batches = [batch2TrainData(voc, [random.choice(pairs) for _ in range(batch_size)])
@@ -446,7 +427,7 @@ def trainIters(model_name, voc, pairs, encoder, decoder, encoder_optimizer, deco
     print('Initializing ...')
     start_iteration = 1
     print_loss = 0
-    if loadFilename:
+    if loadFilename and os.path.exists(loadFilename):
         start_iteration = checkpoint['iteration'] + 1
 
     # Training loop
@@ -472,7 +453,7 @@ def trainIters(model_name, voc, pairs, encoder, decoder, encoder_optimizer, deco
         # Save checkpoint
         if (iteration % save_every == 0):
             directory = os.path.join(save_dir, model_name, corpus_name,
-                                     '{}-{}_{}'.format(encoder_n_layers, decoder_n_layers, hidden_size))
+                                     '{}-{}_{}'.format(encoder_num_layers, decoder_num_layers, hidden_size))
             if not os.path.exists(directory):
                 os.makedirs(directory)
             torch.save({
@@ -512,7 +493,7 @@ class GreedySearchDecoder(nn.Module):
         # Forward input through encoder model
         encoder_outputs, encoder_hidden = self.encoder(input_seq, input_length)
         # Prepare encoder's final hidden layer to be first hidden input to the decoder
-        decoder_hidden = encoder_hidden[:decoder.n_layers]
+        decoder_hidden = encoder_hidden[:decoder.num_layers]
         # Initialize decoder input with SOS_token
         decoder_input = torch.ones(1, 1, device=device, dtype=torch.long) * SOS_token
         # Initialize tensors to append decoded words to
@@ -576,20 +557,20 @@ model_name = 'cb_model'
 attn_model = 'dot'
 # attn_model = 'general'
 # attn_model = 'concat'
-hidden_size = 500
-encoder_n_layers = 2
-decoder_n_layers = 2
+hidden_size = 300
+encoder_num_layers = 2
+decoder_num_layers = 2
 dropout = 0.1
 batch_size = 64
 
 # Set checkpoint to load from; set to None if starting from scratch
-checkpoint_iter = 8000
+checkpoint_iter = None
 loadFilename = os.path.join(save_dir, model_name, corpus_name,
-                            '{}-{}_{}'.format(encoder_n_layers, decoder_n_layers, hidden_size),
+                            '{}-{}_{}'.format(encoder_num_layers, decoder_num_layers, hidden_size),
                             '{}_checkpoint.tar'.format(checkpoint_iter))
 
 # Load model if a loadFilename is provided
-if loadFilename:
+if loadFilename and os.path.exists(loadFilename):
     # If loading on same machine the model was trained on
     checkpoint = torch.load(loadFilename)
     # If loading a model trained on GPU to CPU
@@ -604,13 +585,19 @@ if loadFilename:
 print('Building encoder and decoder ...')
 # Initialize word embeddings
 embedding = nn.Embedding(voc.num_words, hidden_size)
-if loadFilename:
+if loadFilename and os.path.exists(loadFilename):
     embedding.load_state_dict(embedding_sd)
+    if not checkpoint_iter:
+        counter = Counter(list(voc.word2index.keys()))
+        pretrained_embeddings = vocab.Vocab(counter, voc.num_words, vectors="glove.6B.300d",
+                                            specials=[], vectors_cache='../.vector_cache').vectors
+        embedding.weight.data.copy_(pretrained_embeddings)
+        print("Initialized with pretrained embeddings")
 
 # Initialize encoder & decoder models
-encoder = EncoderRNN(hidden_size, embedding, encoder_n_layers, dropout)
-decoder = LuongAttnDecoderRNN(attn_model, embedding, hidden_size, voc.num_words, decoder_n_layers, dropout)
-if loadFilename:
+encoder = EncoderRNN(hidden_size, embedding, encoder_num_layers, dropout)
+decoder = LuongAttnDecoderRNN(attn_model, embedding, hidden_size, voc.num_words, decoder_num_layers, dropout)
+if loadFilename and os.path.exists(loadFilename):
     encoder.load_state_dict(encoder_sd)
     decoder.load_state_dict(decoder_sd)
 
@@ -636,14 +623,14 @@ decoder.train()
 print('Building optimizers ...')
 encoder_optimizer = optim.Adam(encoder.parameters(), lr=learning_rate)
 decoder_optimizer = optim.Adam(decoder.parameters(), lr=learning_rate * decoder_learning_ratio)
-if loadFilename:
+if loadFilename and os.path.exists(loadFilename):
     encoder_optimizer.load_state_dict(encoder_optimizer_sd)
     decoder_optimizer.load_state_dict(decoder_optimizer_sd)
 
 # Run training iterations
 print("Starting Training!")
 trainIters(model_name, voc, pairs, encoder, decoder, encoder_optimizer, decoder_optimizer,
-           embedding, encoder_n_layers, decoder_n_layers, save_dir, n_iteration, batch_size,
+           embedding, encoder_num_layers, decoder_num_layers, save_dir, n_iteration, batch_size,
            print_every, save_every, clip, corpus_name, loadFilename)
 
 # Set dropout layers to eval mode

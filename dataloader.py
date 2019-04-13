@@ -9,7 +9,11 @@ from collections import Counter
 import random
 import itertools
 
-random.seed(1)
+# random.seed(1)
+
+EOS_TOKEN = '<eos>'
+SOS_TOKEN = '<sos>'
+PAD_TOKEN = '<pad>'
 
 
 class OpenSubtitle:
@@ -17,9 +21,9 @@ class OpenSubtitle:
     OpenSubtitle data parser
     """
 
-    def __init__(self, filename, VOCAB_SIZE=2000, batch_size=5, MAX_SENTENCE_LEN=20, shuffle=False):
+    def __init__(self, filename, VOCAB_SIZE=2000, batch_size=5, MAX_SENTENCE_LEN=10, shuffle=False):
         self.batch_size = batch_size
-        self.specials = ['<pad>', '<eos>', '<sos>']
+        self.specials = [PAD_TOKEN, EOS_TOKEN, SOS_TOKEN]
         self.shuffle = shuffle
 
         text = open(filename, mode='r', encoding='utf8').read().lower()
@@ -93,8 +97,8 @@ class OpenSubtitle:
         max_target_length = max([len(dialog) for dialog in targets])
 
         mask = [self.generate_mask(dialog, max_target_length) for dialog in targets]
-        inputs = self.zeroPadding(inputs, self.word2index['<pad>'])
-        targets = self.zeroPadding(targets, self.word2index['<pad>'])
+        inputs = self.zeroPadding(inputs, self.word2index[PAD_TOKEN])
+        targets = self.zeroPadding(targets, self.word2index[PAD_TOKEN])
 
         inputs = torch.tensor(inputs).view(-1, self.batch_size)
         targets = torch.tensor(targets).view(-1, self.batch_size)
@@ -104,7 +108,7 @@ class OpenSubtitle:
         return inputs, input_lengths, targets, mask, max_target_length
 
     def word_id(self, sentence):
-        return [self.word2index[word] for word in sentence]
+        return [self.word2index[word] for word in sentence] + [self.word2index[EOS_TOKEN]]
 
     def generate_mask(self, dialog, max_length):
         return [1] * len(dialog) + [0] * (max_length - len(dialog))
@@ -121,23 +125,25 @@ class OpenSubtitle:
 
 if __name__ == '__main__':
     filename = 'data/OpenSubtitles.en-eu.en'
-    osp = OpenSubtitle(filename, 20000, 256, shuffle=True)
+    osp = OpenSubtitle(filename, 20000, 2, shuffle=True)
 
-    # data = osp.next()
-    # inputs, input_lengths, targets, mask, max_target_length = data
-    # print("Inputs : \n", inputs)
-    # print("Input l: ", input_lengths)
-    # print("Targets: \n", targets)
-    # print("Mask   : \n", mask)
-    # print("Max L  : ", max_target_length)
+    data = osp.next()
+    inputs, input_lengths, targets, mask, max_target_length = data
 
-    for j in range(3):
-        print("New Batch started")
-        for i in range(len(osp)):
-            osp.next()
-        print("Finished")
+    print("Inputs : \n", inputs)
+    print("Input l: ", input_lengths)
+    print("Targets: \n", targets)
+    print("Mask   : \n", mask)
+    print("Max L  : ", max_target_length)
+
+    # for j in range(3):
+    #     print("New Batch started")
+    #     for i in range(len(osp)):
+    #         osp.next()
+    #     print("Finished")
+
     # print(len(osp.vocab))
-    #
+
     # pretrained_embeddings = vocab.Vocab(osp.words, len(osp.vocab), 3, vectors="glove.6B.100d",
     #                                     vectors_cache='../.vector_cache').vectors
     # print(pretrained_embeddings.shape)

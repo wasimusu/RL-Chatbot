@@ -22,11 +22,13 @@ parser.add_argument('--seed', type=int, default=543, metavar='N',
                     help='random seed (default: 543)')
 parser.add_argument('--render', action='store_true',
                     help='render the environment')
-parser.add_argument('--log-interval', type=int, default=10, metavar='N',
+parser.add_argument('--log-interval', type=int, default=25, metavar='N',
                     help='interval between training status logs (default: 10)')
 args = parser.parse_args()
 
 env = gym.make('CartPole-v1')
+env = gym.make('MountainCar-v0')
+env = gym.make('Acrobot-v1')
 env.seed(args.seed)
 torch.manual_seed(args.seed)
 
@@ -34,9 +36,9 @@ torch.manual_seed(args.seed)
 class Policy(nn.Module):
     def __init__(self):
         super(Policy, self).__init__()
-        self.affine1 = nn.Linear(4, 128)
+        self.affine1 = nn.Linear(env.observation_space.high.__len__(), 128)
         self.dropout = nn.Dropout(p=0.6)
-        self.affine2 = nn.Linear(128, 2)
+        self.affine2 = nn.Linear(128, env.action_space.n)
 
         self.saved_log_probs = []
         self.rewards = []
@@ -121,9 +123,15 @@ def main():
         if i_episode % args.log_interval == 0:
             print('Episode {}\tLast reward: {:.2f}\tAverage reward: {:.2f}'.format(
                 i_episode, ep_reward, running_reward))
-        if running_reward > env.spec.reward_threshold:
-            print("Solved! Running reward is now {:.2f}".format(running_reward))
-            break
+
+        # if running_reward > env.spec.reward_threshold:
+        #     print("Solved! Running reward is now {:.2f}".format(running_reward))
+        #     break
+
+        if i_episode > 100:
+            env.render()
+
+    env.close()
 
 
 if __name__ == '__main__':

@@ -15,11 +15,11 @@ from network import *
 save_dir = 'model/'
 MAX_LENGTH = 10  # Maximum sentence length to consider
 corpus_name = 'opensubtitles'
-batch_size = 128
+batch_size = 64
 
 # Configure training/optimization
 clip = 50.0
-teacher_forcing_ratio = 0.1
+teacher_forcing_ratio = 0.9
 learning_rate = 0.0005
 decoder_learning_ratio = 5.0
 print_every = 100
@@ -29,14 +29,14 @@ save_every = 1000  # Save every 10000 iterations
 attn_model = 'dot'
 # attn_model = 'general'
 # attn_model = 'concat'
-hidden_size = 300
-encoder_n_layers = 2
-decoder_n_layers = 2
+hidden_size = 100
+encoder_num_layers = 2
+decoder_num_layers = 2
 dropout = 0.1
 
 # Set checkpoint to load from; set to None if starting from scratch
 dir = os.path.join(save_dir, corpus_name,
-                   '{}-{}_{}'.format(encoder_n_layers, decoder_n_layers, hidden_size))
+                   '{}-{}_{}'.format(encoder_num_layers, decoder_num_layers, hidden_size))
 if not os.path.exists(dir): os.makedirs(dir)
 checkpoints = os.listdir(dir)
 checkpoints = [int(filename.split('_')[0]) for filename in checkpoints]
@@ -51,14 +51,15 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 filename = "data/OpenSubtitles.en-es.en"
 filename = "data/OpenSubtitles.en-eu.en"
-osp = OpenSubtitle(filename, batch_size=batch_size, VOCAB_SIZE=50000, shuffle=True)
+vocab_size = 50000
+osp = OpenSubtitle(filename, batch_size=batch_size, VOCAB_SIZE=vocab_size, shuffle=True)
 data = osp.next()
 inputs, input_lengths, targets, mask, max_target_length = data
 
 SOS_TOKEN = osp.word2index['<sos>']
 EOS_TOKEN = osp.word2index['<eos>']
 PAD_TOKEN = osp.word2index['<pad>']
-vocab_size = len(osp.vocab)
+vocab_size = len(osp.vocab)  # Because some additional words were added to the vocab
 print("Vocab size : ", vocab_size)
 
 
@@ -90,7 +91,7 @@ def train(input_variable, lengths, target_variable, mask, max_target_len, encode
     decoder_input = decoder_input.to(device)
 
     # Set initial decoder hidden state to the encoder's final hidden state
-    decoder_hidden = encoder_hidden[:decoder.n_layers]
+    decoder_hidden = encoder_hidden[:decoder.num_layers]
     # print("Here we are using only last state of decoder for encoder's hidden state : ", decoder_hidden.size())
 
     # Determine if we are using teacher forcing this iteration
@@ -99,7 +100,7 @@ def train(input_variable, lengths, target_variable, mask, max_target_len, encode
     # Forward batch of sequences through decoder one time step at a time
     if use_teacher_forcing:
         for t in range(max_target_len):
-            decoder_output, decoder_hidden = decoder(
+            decoder_output, decoder_hidden, *_ = decoder(
                 decoder_input, decoder_hidden, encoder_outputs
             )
             # Teacher forcing: next input is current target
@@ -138,7 +139,7 @@ def train(input_variable, lengths, target_variable, mask, max_target_len, encode
     return sum(print_losses) / n_totals
 
 
-def trainIters(encoder, decoder, encoder_optimizer, decoder_optimizer, encoder_n_layers, decoder_n_layers,
+def trainIters(encoder, decoder, encoder_optimizer, decoder_optimizer, encoder_num_layers, decoder_num_layers,
                clip, loadFilename):
     # Initializations
     print_loss = 0
@@ -176,7 +177,7 @@ def trainIters(encoder, decoder, encoder_optimizer, decoder_optimizer, encoder_n
             # Save checkpoint
             if (iteration % save_every == 0):
                 directory = os.path.join(save_dir, corpus_name,
-                                         '{}-{}_{}'.format(encoder_n_layers, decoder_n_layers, hidden_size))
+                                         '{}-{}_{}'.format(encoder_num_layers, decoder_num_layers, hidden_size))
                 if not os.path.exists(directory):
                     os.makedirs(directory)
                 torch.save({
@@ -215,7 +216,7 @@ class GreedySearchDecoder(nn.Module):
         # Forward input through encoder model
         encoder_outputs, encoder_hidden = self.encoder(input_seq, input_length)
         # Prepare encoder's final hidden layer to be first hidden input to the decoder
-        decoder_hidden = encoder_hidden[:decoder.n_layers]
+        decoder_hidden = encoder_hidden[:decoder.num_layers]
         # Initialize decoder input with SOS_TOKEN
         decoder_input = torch.ones(1, 1, device=device, dtype=torch.long) * SOS_TOKEN
         # Initialize tensors to append decoded words to
@@ -291,15 +292,19 @@ embedding = nn.Embedding(vocab_size + 1, hidden_size)
 if loadFilename and os.path.exists(loadFilename):
     embedding.load_state_dict(embedding_sd)
 else:
-    pretrained_embeddings = vocab.Vocab(osp.words, vocab_size, 3, vectors="glove.6B.300d",
+    pretrained_embeddings = vocab.Vocab(osp.words, vocab_size, 3, vectors="glove.6B.{}d".format(hidden_size),
                                         vectors_cache='../.vector_cache').vectors
     print(vocab_size, pretrained_embeddings.shape)
     embedding.weight.data.copy_(pretrained_embeddings)
     print("Initialized with pre-trained embeddings")
 
+print("Declared vocab size of decoder : ", vocab_size)
+# TODO : All the below listed encoders and decoders are compatible with each other
 # Initialize encoder & decoder models
-encoder = EncoderRNN(hidden_size, embedding, encoder_n_layers, dropout)
-decoder = LuongAttnDecoderRNN(attn_model, embedding, hidden_size, vocab_size, decoder_n_layers, dropout)
+encoder = EncoderRNN(hidden_size, embedding, encoder_num_layers, dropout)
+# decoder = LuongAttnDecoderRNN(attn_model, embedding, hidden_size, vocab_size, decoder_num_layers, dropout)
+decoder = PlainDecoder(attn_model, embedding, hidden_size, vocab_size, decoder_num_layers, dropout)
+# decoder = RLDecoder(hidden_size, vocab_size)  # TODO : It's hacky. Not a good way to do it.
 if loadFilename and os.path.exists(loadFilename):
     encoder.load_state_dict(encoder_sd)
     decoder.load_state_dict(decoder_sd)
@@ -325,7 +330,7 @@ else:
     print("No existing model to begin with")
 
 # Run training iterations
-trainIters(encoder, decoder, encoder_optimizer, decoder_optimizer, encoder_n_layers, decoder_n_layers, clip,
+trainIters(encoder, decoder, encoder_optimizer, decoder_optimizer, encoder_num_layers, decoder_num_layers, clip,
            loadFilename)
 
 # Set dropout layers to eval mode
@@ -336,4 +341,4 @@ decoder.eval()
 searcher = GreedySearchDecoder(encoder, decoder)
 
 # Begin chatting (uncomment and run the following line to begin)
-# evaluateInput(encoder, decoder, searcher)
+evaluateInput(encoder, decoder, searcher)
