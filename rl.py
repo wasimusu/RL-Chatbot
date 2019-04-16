@@ -9,12 +9,10 @@ import torch.nn as nn
 from torch.autograd import Variable
 from torch import optim
 
-use_cuda = torch.cuda.is_available()
-device = 'cuda' if use_cuda else 'cpu'
+from dataloader import OpenSubtitle
+import config
 
-# Maximum length of the sequences you are mapping
-MAX_LENGTH = 20  # 50
-MIN_LENGTH = 4  # 2
+config = config.Config()
 
 # Dull set (from RL-chatbot)
 dull_set = ["I don't know what you're talking about.", "I don't know.",
@@ -26,14 +24,14 @@ SOS_token = 0
 EOS_token = 1
 
 
-def RLStep(input_variable, target_variable, encoder, decoder, criterion, max_length=MAX_LENGTH,
+def RLStep(input_variable, target_variable, encoder, decoder, criterion, MAX_LENGTH=config.max_sentence_len,
            teacher_forcing_ratio=0.5, bidirectional=False):
     encoder_hidden = encoder.initHidden()
 
     target_length = target_variable.size()[0]
 
-    encoder_outputs = Variable(torch.zeros(max_length, encoder.hidden_size))
-    encoder_outputs = encoder_outputs.to(device) if use_cuda else encoder_outputs
+    encoder_outputs = Variable(torch.zeros(config.max_sentence_len, encoder.hidden_size))
+    encoder_outputs = encoder_outputs.to(config.device) if config.use_cuda else encoder_outputs
 
     loss = 0
     response = []
@@ -46,24 +44,22 @@ def RLStep(input_variable, target_variable, encoder, decoder, criterion, max_len
     #     encoder_outputs[ei] = encoder_output[0][0]
 
     decoder_input = Variable(torch.LongTensor([[SOS_token]]))
-    decoder_input = decoder_input.to(device) if use_cuda else decoder_input
+    decoder_input = decoder_input.to(config.device) if config.use_cuda else decoder_input
 
     if bidirectional:
         # sum the bidirectional hidden states into num_layers long cause the decoder is not bidirectional
         encoder_hidden = encoder_hidden[:encoder.num_layers, :, :] + encoder_hidden[encoder.num_layers:, :, :]
 
-    decoder_hidden = encoder_hidden.to(device)  # TODO : Not the encoder's last hidden state
+    decoder_hidden = encoder_hidden.to(config.device)  # TODO : Not the encoder's last hidden state
 
     use_teacher_forcing = True if random.random() < teacher_forcing_ratio else False
 
     # TODO : hacky patch
-    target_variable = target_variable.to(device)
+    target_variable = target_variable.to(config.device)
 
     if use_teacher_forcing:
         # Teacher forcing: Feed the target as the next input
         for di in range(target_length):
-            # print("Decoder output : ", decoder_input.size())
-            # print(decoder_input)
             decoder_input = decoder_input.view(1, 1)  # The decoder expects 2d input
             decoder_output, decoder_hidden = decoder(
                 decoder_input, decoder_hidden, encoder_outputs)
@@ -82,7 +78,7 @@ def RLStep(input_variable, target_variable, encoder, decoder, criterion, max_len
             ni = topi[0][0]
 
             decoder_input = Variable(torch.LongTensor([[ni]]))
-            decoder_input = decoder_input.to(device) if use_cuda else decoder_input
+            decoder_input = decoder_input.to(config.device) if config.use_cuda else decoder_input
 
             loss += criterion(decoder_output, target_variable[di])
 
@@ -120,11 +116,11 @@ def calculate_rewards(input_variable, target_variable,
                                      bidirectional=bidirectional)
 
         ## Break once we see (1) dull response, (2) the response is less than MIN_LENGTH, (3) repetition
-        if (len(curr_response) < MIN_LENGTH):  # or (curr_response in responses) or (curr_response in dull_responses):
+        if (len(curr_response) < 2):  # or (curr_response in responses) or (curr_response in dull_responses):
             break
 
         curr_response = Variable(torch.LongTensor(curr_response), requires_grad=False).view(-1, 1)
-        curr_response = curr_response.to(device) if use_cuda else curr_response
+        curr_response = curr_response.to(config.device) if config.use_cuda else curr_response
         responses.append(curr_response)
 
         ## Ease of answering
@@ -166,8 +162,8 @@ def calculate_rewards(input_variable, target_variable,
         # Use the forward model to generate the log prob of generating curr_response given ep_input
         # Use the backward model to generate the log prob of generating ep_input given curr_response
         r3 = 0
-        print("Input size : ", ep_input.size())
-        print("Response size : ", curr_response.size())
+        # print("Input size : ", ep_input.size())
+        # print("Response size : ", curr_response.size())
         forward_loss, forward_len, _ = RLStep(ep_input, curr_response,
                                               forward_encoder, forward_decoder,
                                               criterion,
@@ -190,8 +186,8 @@ def calculate_rewards(input_variable, target_variable,
         ## Set the next input
         ep_input = curr_response
         ## TODO: what's the limit of the length? and what should we put as the dummy target?
-        ep_target = Variable(torch.LongTensor([0] * MAX_LENGTH), requires_grad=False).view(-1, 1)
-        ep_target = ep_target.to(device) if use_cuda else ep_target
+        ep_target = Variable(torch.LongTensor([0] * config.max_sentence_len), requires_grad=False).view(-1, 1)
+        ep_target = ep_target.to(config.device) if config.use_cuda else ep_target
 
         # Turn off the teacher forcing ration after first iteration (since we don't have a target anymore).
         teacher_forcing_ratio = 0
@@ -206,14 +202,6 @@ def calculate_rewards(input_variable, target_variable,
     return r
 
 
-from dataloader import OpenSubtitle
-
-filename = "data/OpenSubtitles.en-es.en"
-filename = "data/OpenSubtitles.en-eu.en"
-vocab_size = 50000
-batch_size = 1
-
-
 def trainRLIters(forward_encoder, forward_decoder, backward_encoder, backward_decoder, dull_responses, n_iters,
                  print_every=1000, plot_every=100, learning_rate=0.01, teacher_forcing_ratio=0.5,
                  bidirectional=False):
@@ -221,7 +209,8 @@ def trainRLIters(forward_encoder, forward_decoder, backward_encoder, backward_de
     print_loss_total = 0  # Reset every print_every
     plot_loss_total = 0  # Reset every plot_every
 
-    osp = OpenSubtitle(filename, batch_size=batch_size, VOCAB_SIZE=vocab_size, shuffle=True)
+    # We have to train one pair at a time for RL
+    osp = OpenSubtitle(config.filename, batch_size=1, vocab_size=config.vocab_size, shuffle=True)
 
     # Optimizer
     forward_encoder_optimizer = optim.SGD(forward_encoder.parameters(), lr=learning_rate)
@@ -230,18 +219,12 @@ def trainRLIters(forward_encoder, forward_decoder, backward_encoder, backward_de
     backward_encoder_optimizer = optim.SGD(backward_encoder.parameters(), lr=learning_rate)
     backward_decoder_optimizer = optim.SGD(backward_decoder.parameters(), lr=learning_rate)
 
-    # training_pairs = [variablesFromPair(random.choice(pairs), reverse=False)
-    #                   for i in range(n_iters)]
     criterion = nn.NLLLoss()
 
     for iter in range(len(osp)):
         training_batch = osp.next()
         # Extract fields from batch
         input_variable, input_lengths, target_variable, mask, max_target_len = training_batch
-
-        # training_pair = training_pairs[iter - 1]
-        # input_variable = training_pair[0]
-        # target_variable = training_pair[1]
 
         ## Manually zero out the optimizer
         forward_encoder_optimizer.zero_grad()
@@ -251,8 +234,6 @@ def trainRLIters(forward_encoder, forward_decoder, backward_encoder, backward_de
         backward_decoder_optimizer.zero_grad()
 
         # Forward
-        # print("Input size : ", input_variable.size())
-        # print("Response size : ", target_variable.size())
         forward_loss, forward_len, _ = RLStep(input_variable, target_variable,
                                               forward_encoder, forward_decoder,
                                               criterion,

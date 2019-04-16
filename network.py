@@ -2,7 +2,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+import config
+
+config = config.Config()
 
 
 class EncoderRNN(nn.Module):
@@ -22,7 +24,7 @@ class EncoderRNN(nn.Module):
         self.hidden = self.initHidden()
 
     def forward(self, input_seq, input_lengths, hidden=None):
-        input_seq = input_seq.to(device)
+        input_seq = input_seq.to(config.device)
         # if input_lengths == 1: input_lengths = [len(input_seq)]
         # Convert word indexes to embeddings
         embedded = self.embedding(input_seq)
@@ -135,7 +137,7 @@ class PlainDecoder(nn.Module):
         return output, hidden
 
     def initHidden(self):
-        return torch.zeros(self.num_layers * self.num_directions, self.batch_size, self.hidden_size).to(device)
+        return torch.zeros(self.num_layers * self.num_directions, self.batch_size, self.hidden_size).to(config.device)
 
 
 class LuongAttnDecoderRNN(nn.Module):
@@ -185,7 +187,7 @@ def maskNLLLoss(inp, target, mask):
     nTotal = mask.sum()
     crossEntropy = -torch.log(torch.gather(inp, 1, target.view(-1, 1)).squeeze(1))
     loss = crossEntropy.masked_select(mask).mean()
-    loss = loss.to(device)
+    loss = loss.to(config.device)
     return loss, nTotal.item()
 
 
@@ -208,7 +210,7 @@ class RLDecoder(nn.Module):
 
         hidden0 = torch.zeros(self.num_layers, 1, self.hidden_size)
 
-        hidden0 = hidden0.to(device)
+        hidden0 = hidden0.to(config.device)
         self.hidden0 = nn.Parameter(hidden0, requires_grad=True)
 
     def forward(self, input, hidden, encoder_outputs):
@@ -234,4 +236,52 @@ class RLDecoder(nn.Module):
         return output, hidden
 
     def initHidden(self):
-        return self.hidden0.to(device)
+        return self.hidden0.to(config.device)
+
+
+class GreedySearchDecoder(nn.Module):
+    """
+    Computation Graph
+
+       1) Forward input through encoder model.
+       2) Prepare encoder's final hidden layer to be first hidden input to the decoder.
+       3) Initialize decoder's first input as SOS_TOKEN .
+       4) Initialize tensors to append decoded words to.
+       5) Iteratively decode one word token at a time:
+           a) Forward pass through decoder.
+           b) Obtain most likely word token and its softmax score.
+           c) Record token and score.
+           d) Prepare current token to be next decoder input.
+       6) Return collections of word tokens and scores.
+    """
+
+    def __init__(self, encoder, decoder):
+        super(GreedySearchDecoder, self).__init__()
+        self.encoder = encoder
+        self.decoder = decoder
+
+    def forward(self, input_seq, input_length, max_length):
+        # Forward input through encoder model
+        encoder_outputs, encoder_hidden = self.encoder(input_seq, input_length)
+        # Prepare encoder's final hidden layer to be first hidden input to the decoder
+        decoder_hidden = encoder_hidden[:self.decoder.num_layers]
+        # Initialize decoder input with SOS_TOKEN
+        decoder_input = torch.ones(1, 1, device=config.device, dtype=torch.long) * SOS_TOKEN
+        # Initialize tensors to append decoded words to
+        all_tokens = torch.zeros([0], device=config.device, dtype=torch.long)
+        all_scores = torch.zeros([0], device=config.device)
+        # Iteratively decode one word token at a time
+        for _ in range(max_length):
+            # Forward pass through decoder
+            decoder_output, decoder_hidden = self.decoder(decoder_input, decoder_hidden, encoder_outputs)
+            # Obtain most likely word token and its softmax score
+            decoder_scores, decoder_input = torch.max(decoder_output, dim=1)
+            # Record token and score
+            all_tokens = torch.cat((all_tokens, decoder_input), dim=0)
+            all_scores = torch.cat((all_scores, decoder_scores), dim=0)
+            # Prepare current token to be next decoder input (add a dimension)
+            decoder_input = torch.unsqueeze(decoder_input, 0)
+        # Return collections of word tokens and scores
+        return all_tokens, all_scores
+
+

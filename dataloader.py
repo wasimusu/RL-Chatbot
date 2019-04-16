@@ -21,7 +21,7 @@ class OpenSubtitle:
     OpenSubtitle data parser
     """
 
-    def __init__(self, filename, VOCAB_SIZE=2000, batch_size=5, MAX_SENTENCE_LEN=10, shuffle=False):
+    def __init__(self, filename, vocab_size=2000, batch_size=5, MAX_SENTENCE_LEN=10, shuffle=False):
         self.batch_size = batch_size
         self.specials = [PAD_TOKEN, EOS_TOKEN, SOS_TOKEN]
         self.shuffle = shuffle
@@ -30,7 +30,7 @@ class OpenSubtitle:
         words = text.split()
         self.words = Counter(words)
 
-        self.vocab = self.words.most_common(VOCAB_SIZE)  # Returns list of tuples
+        self.vocab = self.words.most_common(vocab_size - len(self.specials))  # Returns list of tuples
         self.vocab = [word for word, count in self.vocab]
         self.vocab += self.specials
 
