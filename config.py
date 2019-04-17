@@ -9,7 +9,8 @@ class Config:
         # RNN params
         self.embedding_size = 50
         self.hidden_size = self.embedding_size
-        self.batch_size = 16
+        self.seq2seq_batchsize = 16
+        self.chat_batchsize = 1
 
         self.max_sentence_len = 10
         self.vocab_size = 10000
