@@ -6,25 +6,9 @@
 
 Chatbot lends naturally itself to the Reinforcement Learning Paradigm. The objective to maximize is the length of the dialog that chatbots hold with humans or maybe fellow chatbot.
 
-### Reinforement Learning Algorithms to try
-- Policy Gradient
-- and more
-
-### Room for innovation
-- The chatbots will get better. We've to try the alternatives.
-
-### Technology Stack
-- numpy=1.6.1
-- pytorch=1.0.1 with GPU
-- python=3.6.7
-
 ### Datasets
-- OpenSubtitle 80 million dialog (Naturally all of them are not our everyday chats. )
-
-### Reference Papers
-- Deep Reinforcement Learning for Dialogue Generation
-- A Deep Reinforcement Learning Chatbot
-- Building Advanced Dialogue Managers for Goal-Oriented Dialogue Systems
+- Works with OpenSubtitle 80 million dialog (Naturally all of them are not our everyday chats. )
+- Cornell Dialog Corpus used for test architecture because it's small and thus faster
 
 ### RL model for chatbot
 Assume we have two chatbots talking to each other. The chats proceed as follows : p1, q1, p2, q2, ..
@@ -32,10 +16,23 @@ Assume we have two chatbots talking to each other. The chats proceed as follows 
 - Policy : parameters of the encoder / decoder LSTM
 - State : p1, q1
 - Action : p2 which is an arbitrary length dialog
-- Reward : how was the reponse ( drives chat further, repeatitive, coherent, mututal information )
+- Reward : weighted sum of semantic coherence, ease of answering and information flow
 
 
-### The Next Two Weeks
-- Figure out Policy Gradient (Apply it on one of Gym's environment)
-- Preprocessing data
-- Setup GCP 
+### Training the chatbot using Policy Gradient
+- First train the Seq2Seq network to generate response given a dialog.
+- Initiate two agents : one network to generate response given dialog and another to generate input given current response.
+- One agent keeps talking given starting dialog. The responses are then p1, q1, p2, q2 . . . . . 
+- Compute the reward and back-propagate the network
+
+### Technology Stack
+- numpy=1.6.1
+- pytorch=1.0.1
+- python=3.6.7
+- torchtext
+
+
+### Reference Papers
+- Deep Reinforcement Learning for Dialogue Generation
+- A Deep Reinforcement Learning Chatbot
+- Building Advanced Dialogue Managers for Goal-Oriented Dialogue Systems
