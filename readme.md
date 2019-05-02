@@ -20,7 +20,7 @@ Assume we have two chatbots talking to each other. The chats proceed as follows 
 
 
 ### Training the chatbot using Policy Gradient
-- First train the Seq2Seq network to generate response given a dialog.
+- First train the Seq2Seq network to generate response given a dialog. Using pretraine word embedding gives you more time to train the Seq2Seq instead of having to train word embedding.
 - Initiate two agents : one network to generate response given dialog and another to generate input given current response.
 - One agent keeps talking given starting dialog. The responses are then p1, q1, p2, q2 . . . . . 
 - Compute the reward and back-propagate the network
